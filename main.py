@@ -4,6 +4,7 @@
 # Oh well...
 
 
+import argparse
 from io import BytesIO
 from typing import Any
 import urllib.parse
@@ -67,7 +68,7 @@ def getAndKeepSpecs(fontMD5: str) -> dict[str, int | str]:
 
 
 @functools.cache
-def getAndKeepFontNamesAndHashes(slug: str) -> list[dict[str, Any]]:
+def getAndKeepFontNamesAndHashes(filter: str) -> list[dict[str, Any]]:
     json_result = requests.post(
         json={
             'requests': [{
@@ -76,7 +77,7 @@ def getAndKeepFontNamesAndHashes(slug: str) -> list[dict[str, Any]]:
                     'analyticsTags': ['quickViewMTFCOM', 'en'],
                     'attributesToHighlight': [],
                     'distinct': False,
-                    'facetFilters': ['handle:'+slug],
+                    'facetFilters': [filter],
                     'facets': [],
                     'hitsPerPage': 500,
                     'numericFilters': [],
@@ -217,8 +218,8 @@ def loadAndDecompressFont(fontMD5: str, fontName: str = 'myfontsOutput', fontHan
     return result_woff2
 
 
-def processAndSaveFromFontMeta(metadata: dict[str, Any]):
-    file_path = metadata['handle'] + '.otf'
+def processAndSaveFromFontMeta(metadata: dict[str, Any], output_dir: str):
+    file_path = os.path.join(output_dir, metadata['handle'] + '.otf')
     font_obj = loadAndDecompressFont(
         fontMD5=metadata['md5'],
         fontName=metadata['name'],
@@ -233,6 +234,26 @@ def processAndSaveFromFontMeta(metadata: dict[str, Any]):
 
 
 if __name__ == '__main__':
-    fonts = getAndKeepFontNamesAndHashes('regine-font-pizzatypefaces')
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        'handles',
+        nargs='+',
+        type=str,
+        help='slug for your desired font family (e.g. "regine-font-pizzatypefaces")',
+    )
+    parser.add_argument(
+        '--output', '-o',
+        type=str,
+        default='.',
+        help='output directory for OTF files',
+    )
+    args = parser.parse_args()
+
+    fonts = [
+        font_meta
+        for handle in args.handles
+        for font_meta in getAndKeepFontNamesAndHashes('handle:%s' % handle)
+    ]
+
     for font in fonts:
-        processAndSaveFromFontMeta(metadata=font)
+        processAndSaveFromFontMeta(metadata=font, output_dir=args.output)
