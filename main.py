@@ -1,3 +1,6 @@
+from typing import Any
+
+from fontTools.ttLib.ttFont import TTFont
 from io import BytesIO
 import urllib.parse
 import functools
@@ -10,79 +13,17 @@ from cryptography.hazmat.primitives.serialization import load_der_public_key
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
+from fontTools.ttLib.tables import _n_a_m_e
+from fontTools.ttx import TTFont, Tag
 from fontTools.ttLib import woff2
-from fontTools.ttx import TTFont
 import fontTools.merge
 import requests
 
 CLIENT_ID = 'n2T8ilPqVAD6jeSj4z7ZpX1OSIHoyiRE'
-CHARACTER_SUBSETS = [
-    (65, 90),
-    (94, 94),
-    (96, 122),
-    (180, 181),
-    (184, 184),
-    (186, 186),
-    (192, 214),
-    (216, 231),
-    (1424, 1535),
-    (1536, 1791),
-    (1872, 1919),
-    (2160, 2303),
-    (64285, 64310),
-    (64312, 64316),
-    (64318, 64318),
-    (64320, 64321),
-    (64323, 64324),
-    (64326, 64335),
-    (64336, 64829),
-    (64832, 64975),
-    (65008, 65023),
-    (65136, 65140),
-    (65142, 65276),
-    (69216, 69246),
-    (69314, 69319),
-    (69328, 69336),
-    (69370, 69375),
-    (126464, 126467),
-    (126469, 126495),
-    (126497, 126498),
-    (126500, 126500),
-    (126503, 126503),
-    (126505, 126514),
-    (126516, 126519),
-    (126521, 126521),
-    (126523, 126523),
-    (126530, 126530),
-    (126535, 126535),
-    (126537, 126537),
-    (126539, 126539),
-    (126541, 126543),
-    (126545, 126546),
-    (126548, 126548),
-    (126551, 126551),
-    (126553, 126553),
-    (126555, 126555),
-    (126557, 126557),
-    (126559, 126559),
-    (126561, 126562),
-    (126564, 126564),
-    (126567, 126570),
-    (126572, 126578),
-    (126580, 126583),
-    (126585, 126588),
-    (126590, 126590),
-    (126592, 126601),
-    (126603, 126619),
-    (126625, 126627),
-    (126629, 126633),
-    (126635, 126651),
-    (126704, 126705),
-]
 
 
 @functools.cache
-def genAndKeepToken() -> str:
+def getAndKeepToken() -> str:
     json_result = requests.post(
         headers={'origin': 'https://www.myfonts.com'},
         url='https://wfpreviewv2.monotype.com/token?clientId=' + CLIENT_ID,
@@ -91,7 +32,7 @@ def genAndKeepToken() -> str:
 
 
 @functools.cache
-def getTokenEncryptor() -> RSAPublicKey:
+def getAndKeepEncryptedToken() -> bytes:
     URL = 'https://wfpreviewv2.monotype.com/key'
     key_json_value = requests.get(URL).json()['key']
     partial_key = base64.b64decode(
@@ -100,10 +41,21 @@ def getTokenEncryptor() -> RSAPublicKey:
         .removesuffix(b'\n-----END PUBLIC KEY-----')
         .replace(b'\n', b'')
     )
-    return load_der_public_key(partial_key)
+    public_key = load_der_public_key(partial_key)
+    assert isinstance(public_key, RSAPublicKey)
+    return public_key.encrypt(
+        plaintext=getAndKeepToken().encode(),
+        padding=padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
 
 
-def getSpecs(fontMD5: str) -> dict[str, int | str]:
+@functools.cache
+def getAndKeepSpecs(fontMD5: str) -> dict[str, int | str]:
+    # {"data": {"character_set": "ASCII, EBCDIC-CP-BE (Western Europe), IBM CP 037 (English), IBM CP 1026 (Turkish), IBM CP 1140 (Western Europe), ISO Latin-1, ISO Latin-13 (Baltic), ISO Latin-15 (Western Europe), ISO Latin-16 (South-Eastern Europe), ISO Latin-2 (Central and Eastern Europe), ISO Latin-4 (Baltic), ISO Latin-9 (Turkish), MS CP 1250 (Central and Eastern Europe), MS CP 1252 (Western Europe), MS CP 1254 (Turkish), MS CP 1257 (Baltic), Mac Central Europe, Mac Icelandic, Mac Turkish", "family_name": "Regina Standard", "file_size": 205036, "format": "OpenType CFF", "full_name": "Regina Standard Regular", "glyph_count": 1506, "ot_features": "aalt c2sc case ccmp dlig dnom frac kern liga lnum locl mark numr ordn pnum rlig sinf smcp ss01 ss02 ss03 ss04 ss05 ss06 ss08 ss09 ss10 ss11 ss12 ss13 subs sups tnum", "post_script_name": null, "sub_family_name": "Regular", "supported_languages": "Afar, Afrikaans, Aragonese, Asu, Azeri, Bemba, Bena, Bosnian, Catalan, Cebuano, Chiga, Corsican, Czech, Welsh, Danish, Taita, German, Lower Sorbian, Jola-Fonyi, Embu, English, Spanish, Estonian, Basque, Finnish, Filipino, Faroese, French, Friulian, Western Frisian, Irish, Scottish Gaelic, Galician, Swiss German, Gusii, Manx, Croatian, Upper Sorbian, Hungarian, Interlingua, Indonesian, Ido, Icelandic, Italian, Lojban, Machame, Jju, Kamba, Makonde, Kabuverdianu, Kaingang, Kikuyu, Kalaallisut, Kalenjin, Shambala, Colognian, Kurdish, Cornish, Latin, Luxembourgish, Ganda, Ligurian, Lithuanian, Luo, Luyia, Latvian, Meru, Morisyen, Malagasy, Makhuwa-Meetto, Maori, Malay, Maltese, Norwegian Bokm\u00e5l, North Ndebele, Low German, Dutch, Norwegian Nynorsk, Norwegian, South Ndebele, Northern Sotho, Nyanja, Nyankole, Occitan, Oromo, Polish, Portuguese, Romansh, Rundi, Romanian, Rombo, Kinyarwanda, Rwa, Samburu, Sangu, Sardinian, Northern Sami, Sena, Sango, Sidamo, Slovak, Slovenian, Southern Sami, Lule Sami, Inari Sami, Shona, Somali, Albanian, Serbian, Swati, Saho, Southern Sotho, Sundanese, Swedish, Swahili, Teso, Turkmen, Tswana, Turkish, Taroko, Tsonga, Volap\u00fck, Vunjo, Walloon, Walser, Warlpiri, Wolof, Xhosa, Soga, Zulu", "version": "Version 1.000;Glyphs 3.4.1 (3436)", "version_id": ""}}
     json_result = requests.post(
         json={'md5': fontMD5},
         headers={'origin': 'https://www.myfonts.com'},
@@ -112,7 +64,36 @@ def getSpecs(fontMD5: str) -> dict[str, int | str]:
     return json_result
 
 
-def listGlyphSubsets(fontMD5: str) -> list[tuple[int, int]]:
+@functools.cache
+def getAndKeepFontNamesAndHashes(slug: str) -> list[dict[str, Any]]:
+    json_result = requests.post(
+        json={
+            'requests': [{
+                'indexName': 'universal_search_data',
+                'params': {
+                    'analyticsTags': ['quickViewMTFCOM', 'en'],
+                    'attributesToHighlight': [],
+                    'distinct': False,
+                    'facetFilters': ['handle:'+slug],
+                    'facets': [],
+                    'hitsPerPage': 500,
+                    'numericFilters': [],
+                    'ruleContexts': ['quickViewMTFCOM', 'en'],
+                    'tagFilters': '',
+                }
+            }]
+        },
+        headers={'origin': 'https://www.myfonts.com'},
+        url='https://search-myfonts-api.monotype.com/v1/myfonts-search?x-algolia-application-id=P11UZVL396',
+    ).json()
+    return [
+        hit['font_data']
+        for hit in json_result['results'][0]['hits']
+    ]
+
+
+@functools.cache
+def getAndKeepGlyphSubsets(fontMD5: str) -> list[tuple[int, int]]:
     json_result = requests.post(
         json={'md5': fontMD5},
         headers={'origin': 'https://www.myfonts.com'},
@@ -138,7 +119,7 @@ def listGlyphSubsets(fontMD5: str) -> list[tuple[int, int]]:
     return sorted(ranges)
 
 
-def genAndKeepEncryptedData(fontMD5: str, subsets: list[tuple[int, int]] = CHARACTER_SUBSETS, nonce: bytes = b'\0'*12) -> tuple[bytes, bytes]:
+def genEncryptedData(fontMD5: str, subsets: list[tuple[int, int]], nonce: bytes = b'\0'*12) -> tuple[bytes, bytes]:
 
     # {"fontMD5":"bece0fc4fcd4ef8ee9b536e6006c213c","subset":[{"start":"0020","end":"0020"},{"start":"0041","end":"005A"},{"start":"005E","end":"005E"},{"start":"0060","end":"007A"},{"start":"00A0","end":"00A0"},{"start":"00A8","end":"00A8"},{"start":"00AA","end":"00AA"},{"start":"00AF","end":"00AF"},{"start":"00B4","end":"00B5"},{"start":"00B8","end":"00B8"},{"start":"00BA","end":"00BA"},{"start":"00C0","end":"00D6"},{"start":"00D8","end":"00E7"}]}
     json_data = {
@@ -153,7 +134,7 @@ def genAndKeepEncryptedData(fontMD5: str, subsets: list[tuple[int, int]] = CHARA
     }
 
     aes_plaintext = json.dumps(json_data).encode()
-    aes_key = genAndKeepToken().encode()[:32]
+    aes_key = getAndKeepToken().encode()[:32]
 
     encrypted_bin = AESGCM(aes_key).encrypt(nonce, aes_plaintext, None)
 
@@ -163,24 +144,13 @@ def genAndKeepEncryptedData(fontMD5: str, subsets: list[tuple[int, int]] = CHARA
     )
 
 
-def encryptToken() -> bytes:
-    return getTokenEncryptor().encrypt(
-        plaintext=genAndKeepToken().encode(),
-        padding=padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None,
-        ),
-    )
-
-
 def generateWoff2URL(fontMD5: str, glyphSubsets: list[tuple[int, int]]):
     nonce = os.urandom(12)
-    (encrypted_data, tag) = genAndKeepEncryptedData(fontMD5, glyphSubsets, nonce)
+    (encrypted_data, tag) = genEncryptedData(fontMD5, glyphSubsets, nonce)
 
     query_string = urllib.parse.urlencode({
         'encryptedFontData': base64.b64encode(encrypted_data),
-        'encryptedToken': base64.b64encode(encryptToken()),
+        'encryptedToken': base64.b64encode(getAndKeepEncryptedToken()),
         'iv': base64.b64encode(nonce),
         'tag': base64.b64encode(tag),
         'fontFormat': 'WOFF2',
@@ -190,19 +160,54 @@ def generateWoff2URL(fontMD5: str, glyphSubsets: list[tuple[int, int]]):
     return 'https://wfpreviewv2.monotype.com/web-font?' + query_string
 
 
-if __name__ == '__main__':
-    FONT_MD5 = 'bece0fc4fcd4ef8ee9b536e6006c213c'
-
-    url = generateWoff2URL(
-        fontMD5=FONT_MD5,
-        glyphSubsets=listGlyphSubsets(FONT_MD5),
+def loadAndDecompressFont(fontMD5: str, fontName: str = 'myfontsOutput', fontHandle: str = 'myfontsOutput') -> TTFont:
+    font_specs = getAndKeepSpecs(fontMD5)
+    download_url = generateWoff2URL(
+        fontMD5=fontMD5,
+        glyphSubsets=getAndKeepGlyphSubsets(fontMD5),
     )
 
-    woff2_data = requests.get(url).content
+    woff2_data = requests.get(download_url).content
 
-    merger = fontTools.merge.Merger()
-    merged_ttf = merger.merge([
-        BytesIO(woff2_data),
+    result_woff2 = TTFont(
+        file=BytesIO(initial_bytes=woff2_data),
+        recalcBBoxes=False, recalcTimestamp=False,
+    )
+    result_woff2['name'].names.extend([
+        _n_a_m_e.makeName(
+            string=fontName, nameID=1,  # fontfamily
+            platformID=3, platEncID=1, langID=0x409,
+        ),
+        _n_a_m_e.makeName(
+            string=fontName, nameID=2,  # fontSubfamily
+            platformID=3, platEncID=1, langID=0x409,
+        ),
+        _n_a_m_e.makeName(
+            string=fontName, nameID=4,  # fullName
+            platformID=3, platEncID=1, langID=0x409,
+        ),
+        _n_a_m_e.makeName(
+            string=fontHandle, nameID=6,  # postScriptName
+            platformID=3, platEncID=1, langID=0x409,
+        ),
     ])
+    for name_obj in result_woff2['name'].names:
+        if name_obj.nameID != 5:
+            continue
+        name_obj.string = name_obj.string.split(b';', 1)[0]
+        break
 
-    merged_ttf.save('font.ttf')
+    return result_woff2
+
+
+def processFontData(data: dict[str, Any]):
+    file_path = font['handle'] + '.woff2'
+    loadAndDecompressFont(
+        fontMD5=data['md5'], fontName=font['name'],
+    ).save(file_path)
+
+
+if __name__ == '__main__':
+    fonts = getAndKeepFontNamesAndHashes('regine-font-pizzatypefaces')
+    for font in fonts:
+        processFontData(font)
