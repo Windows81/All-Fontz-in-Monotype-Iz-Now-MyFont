@@ -1,22 +1,24 @@
-from typing import Any
+# This script has been tested to work on the Regine font (`regine-font-pizzatypefaces`) as of 2026-10-15.
+# MyFont have every right to tighten their web-font preview system.
+# And VisualPlugin has every right (does he?) to use public APIs however he sees fit.
+# Oh well...
 
-from fontTools.ttLib.ttFont import TTFont
+
 from io import BytesIO
+from typing import Any
 import urllib.parse
 import functools
 import base64
 import json
 import os
 
-from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.serialization import load_der_public_key
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
 from fontTools.ttLib.tables import _n_a_m_e
-from fontTools.ttx import TTFont, Tag
-from fontTools.ttLib import woff2
-import fontTools.merge
+from fontTools.ttx import TTFont
 import requests
 
 CLIENT_ID = 'n2T8ilPqVAD6jeSj4z7ZpX1OSIHoyiRE'
@@ -148,7 +150,8 @@ def generateWoff2URL(fontMD5: str, glyphSubsets: list[tuple[int, int]]):
     nonce = os.urandom(12)
     (encrypted_data, tag) = genEncryptedData(fontMD5, glyphSubsets, nonce)
 
-    query_string = urllib.parse.urlencode({
+    query_string = urllib.parse.urlencode(query={
+
         'encryptedFontData': base64.b64encode(encrypted_data),
         'encryptedToken': base64.b64encode(getAndKeepEncryptedToken()),
         'iv': base64.b64encode(nonce),
@@ -173,6 +176,10 @@ def loadAndDecompressFont(fontMD5: str, fontName: str = 'myfontsOutput', fontHan
         file=BytesIO(initial_bytes=woff2_data),
         recalcBBoxes=False, recalcTimestamp=False,
     )
+
+    # Windows will *not* support fonts that are missing important metadata in their `name` table.
+    # Therefore, I need to add them manually.
+    # `platformID=3, platEncID=1, langID=0x409,` are the defaults that `addName` from `fonttools` supplies.
     result_woff2['name'].names.extend([
         _n_a_m_e.makeName(
             string=fontName, nameID=1,  # fontfamily
@@ -183,6 +190,10 @@ def loadAndDecompressFont(fontMD5: str, fontName: str = 'myfontsOutput', fontHan
             platformID=3, platEncID=1, langID=0x409,
         ),
         _n_a_m_e.makeName(
+            string=fontHandle, nameID=3,  # uniqueID
+            platformID=3, platEncID=1, langID=0x409,
+        ),
+        _n_a_m_e.makeName(
             string=fontName, nameID=4,  # fullName
             platformID=3, platEncID=1, langID=0x409,
         ),
@@ -190,24 +201,38 @@ def loadAndDecompressFont(fontMD5: str, fontName: str = 'myfontsOutput', fontHan
             string=fontHandle, nameID=6,  # postScriptName
             platformID=3, platEncID=1, langID=0x409,
         ),
+        _n_a_m_e.makeName(
+            string=fontHandle, nameID=16,  # preferredFamily
+            platformID=3, platEncID=1, langID=0x409,
+        ),
+        _n_a_m_e.makeName(
+            string=fontName, nameID=17,  # preferredSubfamily
+            platformID=3, platEncID=1, langID=0x409,
+        ),
     ])
-    for name_obj in result_woff2['name'].names:
-        if name_obj.nameID != 5:
-            continue
-        name_obj.string = name_obj.string.split(b';', 1)[0]
-        break
 
+    # No idea if Windows (or any OS font manager) requires the names to be sorted.
+    # Just doing it in case.
+    result_woff2['name'].names.sort(key=lambda x: x.nameID)
     return result_woff2
 
 
-def processFontData(data: dict[str, Any]):
-    file_path = font['handle'] + '.woff2'
-    loadAndDecompressFont(
-        fontMD5=data['md5'], fontName=font['name'],
-    ).save(file_path)
+def processAndSaveFromFontMeta(metadata: dict[str, Any]):
+    file_path = metadata['handle'] + '.otf'
+    font_obj = loadAndDecompressFont(
+        fontMD5=metadata['md5'],
+        fontName=metadata['name'],
+        fontHandle=metadata['handle'],
+    )
+
+    # If we don't set `flavor` to None, then `save` writes as WOFF2.
+    # We want to write as an OTF.
+    font_obj.flavor = font_obj.flavorData = None
+
+    font_obj.save(file_path)
 
 
 if __name__ == '__main__':
     fonts = getAndKeepFontNamesAndHashes('regine-font-pizzatypefaces')
     for font in fonts:
-        processFontData(font)
+        processAndSaveFromFontMeta(metadata=font)
